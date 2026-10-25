@@ -27,23 +27,21 @@ RUN touch src/main.rs \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gosu passwd \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app \
-    && mkdir -p /app/static /data \
-    && chown -R app:app /app /data
+    && mkdir -p /app \
+    && chown -R app:app /app
 
 WORKDIR /app
 
 COPY --from=builder --chown=app:app /app/target/release/school-chat /usr/local/bin/school-chat
 COPY --from=builder --chown=app:app /app/static ./static
 COPY --from=builder --chown=app:app /app/school_knowledge.md ./school_knowledge.md
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
+# DATABASE_URL is supplied by the hosting platform (for example Render).
 ENV PORT=3000 \
-    DATABASE_URL=sqlite:/data/school_chat.db \
     RUST_LOG=info,sqlx=warn,tower_http=info,axum=info \
     LOG_FORMAT=json
 
@@ -53,6 +51,5 @@ STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl --fail --silent --show-error "http://127.0.0.1:${PORT}/health" || exit 1
 
-# The entrypoint fixes ownership on a mounted /data volume, then drops root.
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+USER app
 CMD ["/usr/local/bin/school-chat"]

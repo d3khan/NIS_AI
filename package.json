@@ -1,0 +1,24 @@
+{
+  "name": "nis-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && cargo build --release",
+    "start": "cargo run --release",
+    "dev": "cargo run",
+    "deploy:neon": "neon deploy",
+    "verify:neon": "node --env-file=.env scripts/verify-neon.mjs",
+    "check:rust": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --bin school-chat"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.4",
+    "@neon/env": "^1.6.5",
+    "@neon/realtime": "^0.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

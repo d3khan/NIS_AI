@@ -1,34 +1,35 @@
-# Northgate International School — Parent AI Assistant
+# Northgate International School - Parent AI Assistant
 
-A production-oriented school chat website: a Rust + Axum backend, SQLite through
-SeaORM, a single-worker AI queue, and a dependency-free HTML/CSS/JS frontend.
+A production-oriented school chat website: a Rust + Axum backend, PostgreSQL
+through SeaORM, a single-worker AI queue, and a dependency-free HTML/CSS/JS
+frontend. It deploys as one standalone service and uses Neon branch services
+for Postgres, Functions, Object Storage, and Realtime.
+
 Parents can ask about term dates, attendance, contacts, events, and school life;
-the assistant remembers each browser's conversation.
-
-No accounts, no cookies, no JavaScript frameworks, and no frontend build step.
+the assistant remembers each browser's conversation. There are no accounts, no
+cookies, no JavaScript frameworks, and no frontend build step.
 
 ---
 
 ## Contents
 
 - [What it does](#what-it-does)
-- [Request lifecycle](#request-lifecycle)
-- [AI provider fallback chain](#ai-provider-fallback-chain)
+- [Stack](#stack)
 - [Requirements](#requirements)
 - [Run locally](#run-locally)
 - [Configuration](#configuration)
+- [Neon services](#neon-services)
+- [AI provider fallback chain](#ai-provider-fallback-chain)
 - [School knowledge](#school-knowledge)
 - [HTTP API](#http-api)
-- [Logging and operations](#logging-and-operations)
-- [SQLite in production](#sqlite-in-production)
+- [Database](#database)
 - [Docker](#docker)
 - [Deploy to Render](#deploy-to-render)
-- [Deploy to Shuttle](#deploy-to-shuttle)
+- [Logging and operations](#logging-and-operations)
 - [Security notes](#security-notes)
 - [Troubleshooting](#troubleshooting)
 - [Project layout](#project-layout)
 - [Development checks](#development-checks)
-- [Known limitations](#known-limitations)
 
 ---
 
@@ -37,478 +38,430 @@ No accounts, no cookies, no JavaScript frameworks, and no frontend build step.
 - **Guest mode.** The browser creates a UUID v4, stores it in `localStorage`
   under `school_chat_user_id`, and sends it with every message. The server
   groups history by that UUID. There is no login UI.
-- **Conversation memory.** Every `POST /chat` replays the guest's saved
-  transcript plus the new question and the school knowledge base to the model.
-  Reload the page, ask a follow-up, and the assistant keeps the context.
-- **Groq first, OpenRouter second.** A sequential fallback chain tries three
-  Groq models, then two OpenRouter models. Any refusal, rate limit, server
-  error, timeout, or malformed response advances to the next attempt.
-- **One-at-a-time AI queue.** All model calls go through a single worker with a
-  configurable cool-down, so a burst of parents cannot hammer free-tier quotas.
-  The HTTP handler waits for its job and returns a clear status.
-- **Graceful failure.** If every provider attempt fails, the API returns HTTP
-  503 with a user-safe JSON message. Internal details stay in the logs.
-- **Production plumbing.** Strict startup validation, structured `tracing`
-  logs, SQLite WAL + pool tuning, health checks, request body limits, and
-  Ctrl+C/SIGTERM graceful shutdown.
-- **Editable school knowledge.** `school_knowledge.md` is read once at startup
-  and injected into the system prompt. Change the file, restart the service.
+- **Conversation memory.** Every `POST /chat` replays the guest's saved turns,
+  asks the AI, and then stores the question and answer in one transaction.
+- **One global queue.** A single worker processes jobs with a configurable
+  cool-down between them, so provider quotas are never bursted.
+- **Fallback chain.** Groq models are tried in order, then OpenRouter. Any
+  provider error (429, 5xx, timeout, malformed response) moves on.
+- **Fail-closed configuration.** The service refuses to start without both API
+  keys, a PostgreSQL URL, the admin token, or the school knowledge file.
+- **Neon branch services.** Postgres stores transcripts, a Neon Function is
+  proxied over HTTPS, the `assets` bucket is managed through an S3 SigV4 client,
+  and short-lived sealed Realtime capabilities follow a guest's transcript.
+- **One binary, one image.** The Rust server serves the UI, the chat API, and
+  the admin-only Neon diagnostics; no Node process runs in production.
 
-## Request lifecycle
+## Stack
 
-1. The browser posts `{ "user_id": "<uuid>", "message": "..." }` to `/chat`.
-2. Axum validates the payload: UUID shape, non-empty message, at most 4,000
-   characters, request body at most 16 KiB.
-3. The job is placed on a bounded `mpsc` queue (capacity `QUEUE_CAPACITY`).
-   If the queue is full, the request immediately gets HTTP 503 `busy`.
-4. The single worker loads that guest's history from SQLite, appends the new
-   question to a system prompt containing `school_knowledge.md`, and runs the
-   provider fallback chain.
-5. On success, the user turn and assistant turn are inserted in one database
-   transaction. The handler returns HTTP 200 `{ "status": "ok", "reply": ... }`.
-6. On provider exhaustion the handler returns HTTP 503 `{ "status": "error" }`.
-   On database/internal failure it returns HTTP 500. The transcript is not
-   written for a failed reply, so an unanswered question never appears in
-   history.
-
-## AI provider fallback chain
-
-Attempts run strictly in this order, one model at a time:
-
-| # | Provider | Model |
-|---|----------|-------|
-| 1 | Groq | `llama-3.3-70b-versatile` |
-| 2 | Groq | `meta-llama/llama-4-scout-17b-16e-instruct` |
-| 3 | Groq | `llama-3.1-8b-instant` |
-| 4 | OpenRouter | `meta-llama/llama-3.3-70b-instruct:free` |
-| 5 | OpenRouter | `google/gemma-2-9b-it:free` |
-
-- **Groq endpoint:** `https://api.groq.com/openai/v1/chat/completions`
-- **OpenRouter endpoint:** `https://openrouter.ai/api/v1/chat/completions`
-- OpenRouter requests also send `HTTP-Referer: http://localhost:3000` and
-  `X-Title: School Chat`. Both are configurable for other deployments.
-- Each attempt has its own timeout (`AI_ATTEMPT_TIMEOUT_SECS`, default 30s).
-  Non-2xx responses, network/timeout errors, invalid JSON, empty `choices`, and
-  empty content all count as a failed attempt.
-- The successful provider and model, attempt number, and latency are logged.
-  When every attempt fails, the 503 response is generic; the per-attempt
-  reasons are logged server-side.
-
-Provider URLs can be overridden with `GROQ_API_URL` and `OPENROUTER_API_URL`.
-This is intended for local mock servers and compatible gateways, not for
-bypassing the provider APIs in production.
-
-### Model availability
-
-Provider catalogues change. The five IDs above are the deployment's specified
-defaults, but a retired model returns HTTP 404 and the chain simply advances to
-the next attempt. If every attempt 404s, check the provider's current model
-list and replace the order at runtime (no rebuild required):
-
-```bash
-GROQ_MODELS=model-a,model-b,model-c
-OPENROUTER_MODELS=model-x:free,model-y:free
-```
-
-Each variable is a comma-separated list and replaces that provider's entire
-built-in order. The service rejects empty lists, more than ten models per
-provider, and model IDs containing whitespace.
-
-During verification on 25 October 2026, the default Llama IDs and both default
-OpenRouter `:free` IDs returned HTTP 404 on a test account. Two current
-alternatives that answered successfully were Groq `qwen/qwen3.8-27b` and the
-OpenRouter router `openrouter/free`. Treat those as examples, not permanent
-defaults: confirm availability for your own account before deploying.
+| Layer | Choice |
+| --- | --- |
+| HTTP | Axum 0.8 |
+| Database | Neon Lakebase Postgres |
+| ORM | SeaORM 1.1 with `sqlx-postgres` |
+| AI | Groq and OpenRouter, OpenAI-compatible chat completions |
+| Functions | Neon Functions (Node.js handler, TypeScript source) |
+| Files | Neon Object Storage (S3-compatible) |
+| Live data | Neon Realtime (sealed live SQL) |
+| Frontend | `static/index.html` |
+| IaC / typecheck | `neon.ts`, TypeScript, npm |
 
 ## Requirements
 
-- Rust 1.85+ (the Docker image uses a current stable toolchain).
-- A Groq API key: <https://console.groq.com/keys>
-- An OpenRouter API key: <https://openrouter.ai/keys>
-- Optional: Docker 24+ for container builds.
-
-Both keys are **required**. The service refuses to start if either is missing
-or implausibly short, and prints a startup error explaining what to set. Real
-values belong in `.env` (gitignored) or the platform's secret store, never in
-source control.
+- Rust (stable) and Cargo.
+- PostgreSQL 14 or newer (Neon in production).
+- A Groq key (<https://console.groq.com/keys>) and an OpenRouter key
+  (<https://openrouter.ai/keys>).
+- Node.js 20+ and npm for `neon.ts`, the Neon CLI, and `npm run build`.
+  Node is not needed at runtime.
 
 ## Run locally
 
-```powershell
-# Windows PowerShell
-Copy-Item .env.example .env
-notepad .env          # set GROQ_API_KEY and OPENROUTER_API_KEY
-cargo run
-```
+1. Start PostgreSQL and create a database:
 
-```bash
-# macOS / Linux
-cp .env.example .env
-${EDITOR:-nano} .env  # set GROQ_API_KEY and OPENROUTER_API_KEY
-cargo run
-```
+   ```bash
+   createdb school_chat
+   ```
 
-Open <http://localhost:3000>.
+   Or with Docker:
 
-Useful checks while it runs:
+   ```bash
+   docker run --name school-chat-db \
+     -e POSTGRES_PASSWORD=postgres \
+     -e POSTGRES_DB=school_chat \
+     -p 5432:5432 \
+     -d postgres:16
+   ```
 
-```bash
-curl http://localhost:3000/health
-# {"status":"ok"}
+2. Create `.env` from `.env.example` and fill in the values:
 
-curl -X POST http://localhost:3000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6","message":"When does term start?"}'
-# {"status":"ok","reply":"..."}
-```
+   ```bash
+   cp .env.example .env
+   ```
 
-For a production-speed binary:
+   At minimum: `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `NEON_ADMIN_TOKEN`, and
+   `DATABASE_URL`. Generate the admin token with `openssl rand -hex 32`.
 
-```bash
-cargo build --release
-./target/release/school-chat
-```
+3. Install the Neon tooling and build:
 
-`.env` is loaded automatically by `dotenvy`; real environment variables take
-precedence over the file. The service reads `static/` and
-`school_knowledge.md` relative to its working directory, so start it from the
-project root (or set the paths accordingly).
+   ```bash
+   npm install
+   npm run build          # tsc --noEmit + cargo build --release
+   ```
+
+4. Start the service:
+
+   ```bash
+   npm start              # target/release/school-chat
+   ```
+
+   The schema is created automatically on first start. Open
+   <http://localhost:3000>.
+
+5. Check it:
+
+   ```bash
+   curl http://localhost:3000/health
+   # {"status":"ok"}
+   ```
 
 ## Configuration
 
-All values live in the environment (or `.env` locally). `.env.example` lists
-every supported key with safe defaults.
-
-### Required
-
-| Variable | Purpose |
-|----------|---------|
-| `GROQ_API_KEY` | Groq API key. Startup fails if missing. |
-| `OPENROUTER_API_KEY` | OpenRouter API key. Startup fails if missing. |
-
-### Server and data
+All settings come from the environment. `.env` is loaded on startup for local
+development; production should inject real environment variables.
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
-| `PORT` | `3000` | HTTP listen port. Render sets this automatically. |
-| `DATABASE_URL` | `sqlite:school_chat.db` | SQLite URL. In Docker this defaults to `sqlite:/data/school_chat.db`. |
-| `SQLITE_MAX_CONNECTIONS` | `5` | Pool size (1–64). SQLite still serialises writes. |
-| `SCHOOL_KNOWLEDGE_PATH` | `school_knowledge.md` | Markdown file injected into the system prompt. |
-| `SCHOOL_NAME` | first `# ` heading | Display name and prompt identity. |
+| --- | --- | --- |
+| `GROQ_API_KEY` | required | Groq API key (at least 16 characters) |
+| `OPENROUTER_API_KEY` | required | OpenRouter API key (at least 16 characters) |
+| `DATABASE_URL` | required | PostgreSQL URL, e.g. `postgres://user:pass@host:5432/school_chat` |
+| `DATABASE_URL_UNPOOLED` | falls back to `DATABASE_URL` | Direct URL used only for schema bootstrap |
+| `NEON_ADMIN_TOKEN` | required | Bearer token for `/neon/*`; at least 16 characters |
+| `NEON_FUNCTION_HELLO_BASE_URL` | unset | Deployed Neon Function URL |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | unset | Branch Object Storage credentials |
+| `AWS_ENDPOINT_URL_S3` / `AWS_REGION` | unset | Branch Object Storage endpoint and region |
+| `NEON_STORAGE_BUCKET` | `assets` | Bucket managed by the storage endpoints |
+| `NEON_REALTIME_URL` | unset | Realtime proxy WebSocket URL (`wss://`) |
+| `NEON_REALTIME_SECRET` | unset | Server-only key used to seal live queries |
+| `PORT` | `3000` | HTTP listen port |
+| `DATABASE_MAX_CONNECTIONS` | `5` | PostgreSQL pool size (1-64) |
+| `QUEUE_CAPACITY` | `8` | Chat jobs allowed to wait in the queue |
+| `WORKER_INTERVAL_SECS` | `4` | Cool-down between AI jobs |
+| `AI_ATTEMPT_TIMEOUT_SECS` | `30` | Timeout for one provider attempt (5-120) |
+| `CHAT_RESPONSE_TIMEOUT_SECS` | `180` | Total time a request may wait (30-900) |
+| `SHUTDOWN_TIMEOUT_SECS` | `25` | Grace period for the AI worker on shutdown (5-120) |
+| `LOG_FORMAT` | `pretty` | `pretty` or `json` |
+| `RUST_LOG` | see `.env.example` | `tracing` filter |
+| `SCHOOL_KNOWLEDGE_PATH` | `school_knowledge.md` | Markdown knowledge file |
+| `SCHOOL_NAME` | first `#` heading | Display name override |
+| `GROQ_MODELS` | see below | Comma-separated Groq model order |
+| `OPENROUTER_MODELS` | `openrouter/free` | Comma-separated OpenRouter order |
+| `GROQ_API_URL` | Groq endpoint | Provider URL override |
+| `OPENROUTER_API_URL` | OpenRouter endpoint | Provider URL override |
+| `OPENROUTER_HTTP_REFERER` | `http://localhost:3000` | OpenRouter attribution |
+| `OPENROUTER_APP_TITLE` | `School Chat` | OpenRouter attribution |
 
-### Queue, timeouts, and shutdown
+## Neon services
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `QUEUE_CAPACITY` | `8` | Number of waiting chat jobs. Full queue returns HTTP 503 `busy`. |
-| `WORKER_INTERVAL_SECS` | `4` | Cool-down between AI jobs (max 3600). Higher = gentler on quotas. |
-| `AI_ATTEMPT_TIMEOUT_SECS` | `30` | Per-provider/model timeout (5–120). |
-| `CHAT_RESPONSE_TIMEOUT_SECS` | `180` | How long an HTTP request waits for its queued job (30–900). |
-| `SHUTDOWN_TIMEOUT_SECS` | `25` | Grace period for the worker before it is aborted (5–120). |
+`neon.ts` is the infrastructure declaration for one Neon branch. Initialize and
+apply it with the Neon CLI:
 
-### Logging
+```bash
+neon init -y --org-id <org-id> --project-id <project-id> \
+  --branch production \
+  --services postgres,ai-gateway,object-storage,functions,realtime
+neon deploy
+```
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `LOG_FORMAT` | `pretty` (Docker: `json`) | `pretty` for humans, `json` for aggregators. |
-| `RUST_LOG` | `info,sqlx=warn,tower_http=info,axum=info` | `tracing-subscriber` filter. |
+`neon deploy` applies the bucket and function, then pulls the branch variables
+into `.env`. It does not overwrite provider keys that are already there. The
+declared services are:
 
-### Provider overrides (advanced)
+| Service | Declaration | Runtime wiring |
+| --- | --- | --- |
+| Postgres | Branch database | SeaORM on pooled `DATABASE_URL`; schema bootstrap on `DATABASE_URL_UNPOOLED` |
+| Functions | `hello` in `hello.ts` | `GET /neon/functions/hello` proxies the deployed HTTPS URL |
+| Object Storage | `assets` bucket (private) | S3 SigV4 client in `src/neon.rs`; list/put/get/delete endpoints |
+| Realtime | `preview.realtime: true` | Sealed live query for a guest transcript |
+| AI Gateway | `aiGateway: false` | Disabled because the Free plan does not serve gateway requests |
 
-| Variable | Default |
-|----------|---------|
-| `GROQ_MODELS` | the three Groq IDs above, comma-separated |
-| `OPENROUTER_MODELS` | the two OpenRouter IDs above, comma-separated |
-| `GROQ_API_URL` | `https://api.groq.com/openai/v1/chat/completions` |
-| `OPENROUTER_API_URL` | `https://openrouter.ai/api/v1/chat/completions` |
-| `OPENROUTER_HTTP_REFERER` | `http://localhost:3000` |
-| `OPENROUTER_APP_TITLE` | `School Chat` |
+### Postgres
 
-Set the OpenRouter referer to your real public origin when you deploy.
+Neon exposes two URLs:
+
+- `DATABASE_URL` is pooled (PgBouncer). The application uses it for all chat
+  traffic.
+- `DATABASE_URL_UNPOOLED` is direct. The server uses it once at startup to
+  create `chat_messages`, then closes that connection. If the direct URL is not
+  set (plain local Postgres), bootstrap falls back to `DATABASE_URL`.
+
+### Functions
+
+`hello.ts` is deployed as `hello` and gets a public HTTPS URL. The app reads
+`NEON_FUNCTION_HELLO_BASE_URL` and exposes a bearer-protected proxy at
+`GET /neon/functions/hello`, which returns the function's status and body.
+
+### Object Storage
+
+Object Storage is S3-compatible and branch-scoped. The app implements SigV4
+signing directly in Rust (no AWS SDK) and reads the standard variables written
+by `neon deploy`: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_ENDPOINT_URL_S3`, and `AWS_REGION`. The declared bucket is `assets`.
+
+Keys are restricted to letters, digits, `/`, `-`, `_`, `.`, `~`, with no empty
+or `..` segments. Uploads are capped at 5 MiB. All storage endpoints require the
+admin bearer token.
+
+### Realtime
+
+Realtime is in beta. The server mints a **sealed live query** — a short-lived
+compact JWE (AES-256-GCM) — for one guest's transcript:
+
+```text
+SELECT id, user_id, role, content, created_at
+FROM chat_messages WHERE user_id = $1 ORDER BY id
+```
+
+`GET /neon/realtime/sealed?user_id=<uuid>` returns the capability, its
+fingerprint, and a 60-second expiry. This is the same `@neon/realtime/server`
+sealing format; `src/neon.rs` implements it in Rust so the Rust server can issue
+capabilities without a Node sidecar. The browser consumes the capability with
+`createRealtimeClient({ url })` and `client.subscribe(capability)`.
+
+The endpoint is admin-only: the current guest-UUID model has no identity proof,
+so exposing a transcript capability publicly would widen read access. Wire it
+through an authenticated endpoint before rendering live messages in the UI.
+
+### AI Gateway
+
+The gateway is declared in `neon.ts` but disabled because the Neon Free plan
+rejects deployments with it enabled. After upgrading, set `aiGateway: true` in
+`neon.ts`, run `neon deploy`, and update the app to use the injected gateway
+variables.
+
+
+## AI provider fallback chain
+
+Built-in order:
+
+```text
+Groq:       qwen/qwen3.8-27b, openai/gpt-oss-120b, openai/gpt-oss-20b
+OpenRouter: openrouter/free
+```
+
+Every Groq model is attempted before OpenRouter. The first non-empty reply
+wins. A failure is logged with the provider, model, attempt number, latency,
+and error. Set `GROQ_MODELS` or `OPENROUTER_MODELS` to replace a chain
+completely; up to ten models per provider are accepted.
 
 ## School knowledge
 
-`school_knowledge.md` is the assistant's only source of school facts. It is
-read **once at startup**; unreadable or empty files abort the boot with a clear
-error. To change the content:
+Answers are constrained to `school_knowledge.md`. The file is read at startup;
+the service exits if it is missing or empty. Set `SCHOOL_KNOWLEDGE_PATH` to use
+a different file, and `SCHOOL_NAME` to override the school name parsed from the
+first `#` heading.
 
-1. Edit `school_knowledge.md`.
-2. Restart the process (`cargo run`, or redeploy the container).
-
-The generated system prompt includes the exact instruction:
-
-> Read the provided school_knowledge.md carefully to answer the user's question.
-
-The assistant is told to use only that information, admit when an answer is
-missing, and direct parents to the main office. Plain-text answers are
-requested; Markdown syntax is discouraged because the UI renders text, not
-Markdown.
-
-If the file starts with a level-1 heading, that heading becomes the school
-name unless `SCHOOL_NAME` is set.
+The system prompt tells the model to answer only from this document, to admit
+when information is missing, and to direct parents to the main office.
 
 ## HTTP API
 
 ### `POST /chat`
 
-Request:
-
 ```json
-{ "user_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "message": "What time does school start?" }
+{ "user_id": "6f1c2b7e-...", "message": "When does term start?" }
 ```
 
-Success `200`:
+Success:
 
 ```json
-{ "status": "ok", "reply": "School starts at 8:15 a.m." }
+{ "status": "ok", "reply": "..." }
 ```
 
-Status codes:
+Errors use a `status` plus a human-readable `message`:
 
-| Status | Body `status` | Meaning |
-|--------|---------------|---------|
-| `200` | `ok` | Reply generated and saved. |
-| `400` | `error` | Invalid JSON, malformed UUID, empty message, or message too long. |
-| `500` | `error` | Database or internal failure. Details are logged, not returned. |
-| `503` | `busy` | Queue full or the reply exceeded `CHAT_RESPONSE_TIMEOUT_SECS`. Retry shortly. |
-| `503` | `error` | Every AI provider attempt failed, or the worker is shutting down. |
-
-All error bodies use `{ "status": "...", "message": "..." }` with a message
-safe to show to a parent.
+- `400` - invalid JSON, invalid UUID, empty message, or more than 4,000
+  characters.
+- `503` - queue full, all AI providers unavailable, or response timeout.
+- `500` - internal database or worker failure.
 
 ### `GET /health`
 
-- `200 {"status":"ok"}` when SQLite responds within 3 seconds and the worker
-  queue is open.
-- `503 {"status":"error","message":"..."}` when the database ping fails/times
-  out or the worker is unavailable.
+Returns `200 {"status":"ok"}` when the worker queue is open and the database
+responds to a ping within three seconds; otherwise `503`.
 
-Use `/health` as the container/platform health check. It is intentionally
-cheap: no AI calls, no table scans.
+### Neon admin endpoints
 
-## Logging and operations
+Every `/neon/*` route requires a bearer token matching `NEON_ADMIN_TOKEN`:
 
-`tracing` emits:
-
-- one span per HTTP request with method, path, status, and latency;
-- payload rejections and validation failures;
-- every failed provider attempt with provider, model, attempt number, latency,
-  and a truncated error;
-- the successful provider/model and latency for each reply;
-- queue-full, provider-exhaustion, database, and shutdown events.
-
-Local development (`LOG_FORMAT=pretty`):
-
-```text
-INFO school_chat: AI provider succeeded provider="groq" model="llama-3.3-70b-versatile" attempt=1 latency_ms=842
-INFO school_chat: AI reply delivered user_id=... provider=groq model=llama-3.3-70b-versatile chars=214
+```bash
+# Load the same value the server uses.
+export NEON_ADMIN_TOKEN="$(grep '^NEON_ADMIN_TOKEN=' .env | cut -d= -f2-)"
 ```
 
-Production (`LOG_FORMAT=json`) emits one JSON object per line, suitable for
-Render, Loki, CloudWatch, and similar collectors. Set `RUST_LOG=debug` only
-while diagnosing; it is noisy and may include provider error bodies.
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/neon/status` | Live reachability of Postgres, Functions, Storage, and Realtime config |
+| `GET` | `/neon/functions/hello` | Invoke the deployed Neon Function through the server |
+| `GET` | `/neon/storage/objects?prefix=&limit=` | List bucket objects |
+| `PUT` | `/neon/storage/objects/{key}` | Upload a body (5 MiB cap, `Content-Type` preserved) |
+| `GET` | `/neon/storage/objects/{key}` | Download an object |
+| `DELETE` | `/neon/storage/objects/{key}` | Delete an object |
+| `GET` | `/neon/realtime/sealed?user_id=<uuid>` | Mint a 60-second sealed transcript query |
 
-Shutdown behaviour:
+```bash
+curl -H "Authorization: Bearer $NEON_ADMIN_TOKEN" \
+  http://localhost:3000/neon/status
 
-- Ctrl+C (and Ctrl+Break on Windows) and, on Unix, SIGTERM stop accepting new
-  connections.
-- In-flight HTTP requests are allowed to finish.
-- The worker drains queued jobs, then the SQLite pool is closed.
-- If the worker does not stop within `SHUTDOWN_TIMEOUT_SECS`, it is aborted and
-  the pool is still closed. Exit code is 0 on a clean shutdown.
+curl -H "Authorization: Bearer $NEON_ADMIN_TOKEN" \
+  http://localhost:3000/neon/functions/hello
 
-## SQLite in production
+printf 'hello from storage' | curl -X PUT \
+  -H "Authorization: Bearer $NEON_ADMIN_TOKEN" \
+  -H "Content-Type: text/plain" \
+  --data-binary @- \
+  http://localhost:3000/neon/storage/objects/proof/hello.txt
 
-The pool is configured with:
+curl -H "Authorization: Bearer $NEON_ADMIN_TOKEN" \
+  "http://localhost:3000/neon/storage/objects?prefix=proof/"
 
-- `max_connections = SQLITE_MAX_CONNECTIONS` (default 5), `min_connections = 1`;
-- 10s connect timeout, 30s acquire timeout, 5-minute idle timeout,
-  30-minute max lifetime;
-- WAL journal mode for file databases, `synchronous=NORMAL`, foreign keys on,
-  5-second busy timeout, `create_if_missing`;
-- SQLx statement logging disabled (application logs remain structured).
+curl -H "Authorization: Bearer $NEON_ADMIN_TOKEN" \
+  http://localhost:3000/neon/storage/objects/proof/hello.txt
 
-Operational rules:
+curl -H "Authorization: Bearer $NEON_ADMIN_TOKEN" \
+  "http://localhost:3000/neon/realtime/sealed?user_id=6f1c2b7e-..."
+```
 
-- **Run one instance.** The AI queue and SQLite writer live in process memory.
-  Do not scale horizontally against the same database file. A network-mounted
-  SQLite file is not supported.
-- **Persist the database.** In Docker, mount a volume at `/data` and keep
-  `DATABASE_URL=sqlite:/data/school_chat.db`. Without a persistent volume,
-  history disappears on redeploy/restart.
-- **Back up** by copying the database while the service is stopped, or use
-  `sqlite3 school_chat.db ".backup 'backup.db'"` for an online backup.
-- WAL creates `-wal` and `-shm` companion files; copy/back them up together.
-- SQLite serialises writes. The worker is already single-writer, so the pool is
-  for read/health concurrency rather than parallel AI writes.
+## Database
+
+The `chat_messages` table is created at startup from the SeaORM entity with the
+PostgreSQL backend. No hand-written SQL or migration step is required. When
+`DATABASE_URL_UNPOOLED` is present, this one DDL statement runs on the direct
+endpoint; the long-lived pool then connects through the pooled `DATABASE_URL`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `SERIAL` | Primary key |
+| `user_id` | `TEXT` | Browser UUID, indexed for history queries |
+| `role` | `TEXT` | `user` or `assistant` |
+| `content` | `TEXT` | Message body |
+| `created_at` | `TIMESTAMPTZ` | UTC |
+
+`user_id` is deliberately not a foreign key, so a future accounts table can be
+linked to existing guest conversations.
 
 ## Docker
 
-The image is a multi-stage build:
-
-- **Builder:** full Rust toolchain, dependency layer cached with a dummy
-  `main.rs`, release build with fat LTO, one codegen unit, stripped symbols, and
-  `panic = "abort"`.
-- **Runtime:** `debian:bookworm-slim`, only `ca-certificates`, `curl`, `gosu`,
-  and `passwd`; runs as unprivileged uid/gid `10001`; static files and knowledge
-  copied in; `/data` prepared for SQLite.
-- The entrypoint fixes ownership on a mounted `/data` volume, then drops from
-  root to `app` with `gosu`.
-- Health check: `curl --fail http://127.0.0.1:${PORT}/health`.
-- `STOPSIGNAL SIGTERM`, JSON logs by default.
-
-Build and run:
-
 ```bash
 docker build -t school-chat .
-
 docker run --rm -p 3000:3000 \
-  --env-file .env \
-  -e DATABASE_URL=sqlite:/data/school_chat.db \
-  -v school-chat-data:/data \
+  -e DATABASE_URL="postgres://user:pass@host:5432/school_chat" \
+  -e NEON_ADMIN_TOKEN="..." \
+  -e GROQ_API_KEY="..." \
+  -e OPENROUTER_API_KEY="..." \
   school-chat
 ```
 
-`-e DATABASE_URL=...` is important: a local `.env` usually contains
-`DATABASE_URL=sqlite:school_chat.db`, and `--env-file` would otherwise override
-the image default and write inside the container layer. With the explicit
-override, the database lives on the named volume.
-
-Do not bake keys into the image. Pass them at runtime with `--env-file`, `-e`,
-or your platform's secret store. `.dockerignore` excludes `.env`, databases,
-`target/`, and documentation.
+The image runs as a non-root user, exposes `PORT` (default `3000`), and has a
+health check against `/health`.
 
 ## Deploy to Render
 
 1. Push the repository to GitHub.
-2. Create a **Web Service** → **Docker**; use the repository root as the build
-   context (the `Dockerfile` is detected automatically).
-3. Set the health check path to `/health`.
+2. Create a **PostgreSQL** instance on Render and copy its internal connection
+   string.
+3. Create a **Web Service** from the repository:
+   - Environment: **Docker**.
+   - Health check path: `/health`.
 4. Add environment variables:
-   - `GROQ_API_KEY`, `OPENROUTER_API_KEY` (mark as secrets);
-   - `DATABASE_URL=sqlite:/data/school_chat.db`;
-   - `LOG_FORMAT=json`;
-   - optionally `RUST_LOG`, `QUEUE_CAPACITY`, `WORKER_INTERVAL_SECS`, and the
-     timeout values;
-   - `OPENROUTER_HTTP_REFERER=https://your-service.onrender.com`.
-5. Attach a **persistent disk** mounted at `/data`. Persistent disks are
-   available on paid instance types; choose one instance, not autoscaling.
-6. Deploy. Render sets `PORT`; do not hardcode a different port.
+   - `DATABASE_URL` - the Render PostgreSQL internal URL, or the pooled Neon
+     URL when keeping Neon as the database.
+   - `NEON_ADMIN_TOKEN` - a long random bearer token.
+   - `GROQ_API_KEY`, `OPENROUTER_API_KEY`.
+   - Optionally `LOG_FORMAT=json`, `RUST_LOG`, and the queue/timeout settings.
+5. Deploy. Render injects `PORT`; the Dockerfile's `3000` is only the local
+   fallback.
 
-Render notes:
+To use Neon services from Render, add the rest of the branch variables
+(`DATABASE_URL_UNPOOLED`, `NEON_FUNCTION_HELLO_BASE_URL`, the four `AWS_*`
+values, and `NEON_REALTIME_URL`/`NEON_REALTIME_SECRET`). Store them as Render
+secret environment variables, never in the image.
 
-- Without a persistent disk (for example, the free tier), the container
-  filesystem is ephemeral: chat history is lost on restart or redeploy. Treat
-  free-tier deployments as demos.
-- Keep the service at **one instance**. Multiple instances would each have
-  their own in-memory queue and would contend for the same SQLite file.
-- The platform sends SIGTERM on deploy; the app drains in-flight work for up to
-  `SHUTDOWN_TIMEOUT_SECS`.
-- If the platform has a slow cold start, raise the health check grace period.
-  The app binds only after the knowledge file, configuration, and database are
-  ready.
+PostgreSQL is a managed service, so no persistent disk or `/data` volume is
+needed. The table is created on the first successful start.
 
-## Deploy to Shuttle
+## Logging and operations
 
-Shuttle builds Rust projects from source; it does not consume this Dockerfile
-the way a container platform does. For a Shuttle deployment:
-
-- Create `Shuttle.toml` with the project name and any Shuttle-specific
-  configuration.
-- Store `GROQ_API_KEY` and `OPENROUTER_API_KEY` in Shuttle's secret store, not
-  in source or `Shuttle.toml`.
-- Set `DATABASE_URL` to a writable location that survives deploys. If your
-  Shuttle plan/feature set does not provide persistent storage, point the app
-  at a persistent database instead of relying on the container filesystem, or
-  adapt the data layer to Postgres.
-- Use the same `PORT` and `/health` conventions; the app binds `0.0.0.0`.
-- `school_knowledge.md`, `static/`, and the binary must be present in the
-  deployed project.
-
-The Dockerfile remains the reference for a reproducible container build and is
-useful for Render, Fly.io, Railway, or any Docker host.
+- `LOG_FORMAT=pretty` for local development, `json` for log aggregators.
+- Startup logs the version, port, queue size, worker interval, AI timeout, and
+  school name; it never logs API keys.
+- On `SIGTERM`, Ctrl+C, or Ctrl+Break, the HTTP server stops accepting requests,
+  the AI worker drains queued jobs without the cool-down, and the database pool
+  closes. The worker is aborted if it exceeds `SHUTDOWN_TIMEOUT_SECS`.
+- Every AI attempt logs provider, model, attempt number, latency, and error.
 
 ## Security notes
 
-- **Never commit real keys.** `.env` is gitignored, `.dockerignore` excludes it,
-  and no key is compiled into the binary or baked into the image.
-- Keys are read from the process environment and validated at startup. Startup
-  errors name the missing variable and where to obtain it; they never print the
-  key value.
-- Provider error bodies are truncated before logging. Chat payloads are not
-  logged in full; only the guest UUID and message length are logged.
-- The database stores guest UUIDs and chat text. There is no authentication;
-  anyone with a UUID can read that UUID's history by using it in requests. Do
-  not treat the UUID as a security boundary for sensitive data.
-- The app does not parse `X-Forwarded-*` headers. If you add a reverse proxy,
-  terminate TLS there, forward only to the app's private port, and set
-  `OPENROUTER_HTTP_REFERER` to the public origin.
-- Rotate any key that has been pasted into a chat, ticket, or log. Use separate
-  keys for local development and production.
-- Set a real `OPENROUTER_HTTP_REFERER` and `OPENROUTER_APP_TITLE` in production;
-  the localhost default is for development only.
+- Keep `.env` out of version control; it contains API keys, the database
+  password, Object Storage credentials, and the Realtime secret.
+- All `/neon/*` routes are bearer-protected and compare the token in constant
+  time. Use HTTPS in production.
+- The chat endpoint validates the UUID and caps messages at 4,000 characters;
+  chat request bodies are capped at 16 KiB. Storage uploads are capped at 5 MiB.
+- Provider error bodies are truncated before logging, and keys, storage
+  credentials, and the Realtime secret are never logged or returned.
+- Sealed Realtime capabilities live for 60 seconds and are bound to one fixed
+  transcript query and one guest UUID.
+- Guest history is grouped by the browser UUID and there is no login. The
+  Realtime capability endpoint remains admin-only for that reason.
 
 ## Troubleshooting
 
-| Symptom | Cause and fix |
-|---------|---------------|
-| `startup configuration error: GROQ_API_KEY is required` | Set the key in `.env` or the environment. Both provider keys are mandatory. |
-| `startup configuration error: ... too short` | A placeholder or truncated key was supplied. Use the full provider key. |
-| `503 {"status":"busy"}` | The queue is full or a reply exceeded `CHAT_RESPONSE_TIMEOUT_SECS`. Wait a few seconds and retry; raise `QUEUE_CAPACITY` or lower `WORKER_INTERVAL_SECS` only if quotas allow. |
-| `503 {"status":"error"}` | Every Groq and OpenRouter attempt failed. Check the logs for per-model HTTP status/timeouts, provider status pages, and key quotas. |
-| `500 {"status":"error"}` | Database or internal failure. Check the log entry with the same request ID/timestamp; verify `/data` is writable and the disk is not full. |
-| Health check returns 503 | SQLite ping failed/timed out, or the worker is unavailable. Check the volume mount and `/data` permissions. |
-| `database is locked` | A second process or another replica is writing the same SQLite file, or a long transaction is blocking. Run one instance and keep writes short. |
-| Knowledge changes are ignored | The file is read once at startup. Restart the process. |
-| Models return 404/429 | A model was retired or the account is rate-limited. Set `GROQ_MODELS` / `OPENROUTER_MODELS` to IDs your account currently exposes, or wait for quota reset. The startup defaults are listed in the provider-chain section. |
-| Docker container exits immediately | Check `docker logs`. Common causes: missing keys, a mounted `/data` without write permission, or a missing `school_knowledge.md`. |
+| Symptom | Likely cause |
+| --- | --- |
+| `DATABASE_URL is required` | `.env` is missing or the variable is unset |
+| `DATABASE_URL must be a PostgreSQL URL` | A SQLite or malformed URL was supplied |
+| `database initialisation failed` | PostgreSQL is not running, unreachable, or the credentials/database are wrong |
+| `GROQ_API_KEY is required` | Key missing from `.env` or the process environment |
+| `could not read the school knowledge file` | `school_knowledge.md` is missing or `SCHOOL_KNOWLEDGE_PATH` is wrong |
+| `503` with `busy` | Queue is full or an AI call is slow; retry shortly |
+| `503` after all attempts | Every Groq and OpenRouter model failed; check provider status and keys |
+| `401` from `/neon/*` | Missing/wrong `Authorization: Bearer $NEON_ADMIN_TOKEN` header |
+| `Object storage is partially configured` | Some of the four `AWS_*` variables are missing; run `neon deploy` |
+| `NEON_REALTIME_SECRET must contain a 32-byte key` | Stale secret; run `neon deploy` or `neon realtime rotate-secret` |
+| `Object storage is not configured` | The branch has no storage variables; check `neon.ts` and `neon deploy` |
+| AI Gateway warning during deploy | Expected on the Free plan; the gateway is intentionally disabled |
 
 ## Project layout
 
 ```text
 .
-├── Cargo.toml
-├── Cargo.lock
-├── .env.example              # safe template; no real secrets
-├── .gitignore                # ignores .env and SQLite files
+├── Cargo.toml            # Rust dependencies
+├── Dockerfile            # production image
 ├── .dockerignore
-├── Dockerfile                # multi-stage production image
-├── docker-entrypoint.sh      # /data ownership fix + gosu privilege drop
-├── school_knowledge.md       # the only school data source
-├── static/
-│   └── index.html            # single-file UI (HTML/CSS/JS)
-└── src/
-    ├── main.rs               # config, providers, queue, handlers, startup
-    └── entity/
-        └── chat_message.rs   # SeaORM entity
+├── .env.example          # documented configuration
+├── neon.ts               # Neon branch services (Postgres, Functions, Storage, Realtime)
+├── hello.ts              # Neon Function source
+├── package.json          # Neon CLI, typecheck, and build scripts
+├── tsconfig.json
+├── scripts/
+│   └── verify-neon.mjs   # live Neon service round-trip check
+├── school_knowledge.md   # grounding document
+├── src/
+│   ├── main.rs           # config, AI chain, queue worker, Axum handlers
+│   ├── neon.rs           # Functions client, S3 SigV4 client, Realtime sealing
+│   └── entity/
+│       └── chat_message.rs
+└── static/
+    └── index.html        # single-page frontend
 ```
 
 ## Development checks
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo build
-cargo build --release
+npm run build        # tsc --noEmit and cargo build --release
+npm run check:rust   # fmt check, clippy with -D warnings, unit tests
+
+# with the server running:
+npm run verify:neon  # live Function, Storage round-trip, and Realtime subscription
 ```
-
-There is no frontend build step. To test provider fallback deterministically,
-point `GROQ_API_URL` and `OPENROUTER_API_URL` at a local OpenAI-compatible mock
-and use short timeouts; the chain order and headers are ordinary HTTP, so the
-mock can assert them.
-
-## Known limitations
-
-- One process, one worker, one SQLite file. This is deliberate for a small
-  school site and free-tier quotas, not a horizontally scalable design.
-- The queue is in memory: jobs are lost on restart, and a client must retry.
-- No authentication or rate limiting per guest beyond the global queue and body
-  limit. Put the service behind a platform proxy or add a rate limiter before
-  exposing it to a large audience.
-- Chat history grows without pruning. Add a retention job if the database size
-  becomes a concern.
-- The built-in model lists live in `src/main.rs` and are compile-time defaults.
-  Provider catalogues change; use the `GROQ_MODELS` / `OPENROUTER_MODELS`
-  environment overrides instead of rebuilding when a model is retired.
-- SQLite is not a multi-region or highly available store. For larger
-  deployments, move the data layer to Postgres.
