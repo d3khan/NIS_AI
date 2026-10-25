@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Northgate International School - Parent Assistant">
+  <title>Northgate International School Assistant</title>
+  <style>
+    :root {
+      --navy: #0d1b2a;
+      --navy-light: #1b2a4a;
+      --green: #1a7f5e;
+      --green-light: #2d9f7a;
+      --green-pale: #e8f5ef;
+      --amber: #c47a1a;
+      --amber-bg: #fff8e1;
+      --error: #b42318;
+      --error-bg: #fef2f2;
+      --white: #ffffff;
+      --off-white: #fafafa;
+      --gray-50: #f8f9fa;
+      --gray-100: #f1f3f5;
+      --gray-200: #e9ecef;
+      --gray-300: #dee2e6;
+      --gray-400: #adb5bd;
+      --gray-500: #868e96;
+      --gray-600: #6c757d;
+      --gray-700: #495057;
+      --gray-800: #343a40;
+      --gray-900: #212529;
+      --text-primary: var(--navy);
+      --text-secondary: var(--gray-700);
+      --text-muted: var(--gray-500);
+      --shadow-sm: 0 1px 2px rgba(13, 27, 42, 0.06);
+      --shadow-md: 0 4px 12px rgba(13, 27, 42, 0.08);
+      --shadow-lg: 0 8px 24px rgba(13, 27, 42, 0.1);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-full: 9999px;
+      --transition-fast: 120ms ease;
+      --transition-normal: 200ms ease;
+      --max-width: 760px;
+      --header-height: 72px;
+      --composer-height: auto;
+      --safe-top: env(safe-area-inset-top, 0);
+      --safe-bottom: env(safe-area-inset-bottom, 0);
+      --safe-left: env(safe-area-inset-left, 0);
+      --safe-right: env(safe-area-inset-right, 0);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      :root {
+        --transition-fast: 0ms;
+        --transition-normal: 0ms;
+      }
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { height: 100%; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      background: var(--off-white);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    /* Layout */
+    .app {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      background: var(--white);
+      box-shadow: var(--shadow-lg);
+      height: 100vh;
+      height: 100dvh;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    @media (max-width: 760px) {
+      .app {
+        max-width: 100%;
+        box-shadow: none;
+        border-radius: 0;
+      }
+    }
+
+    /* Header */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--white);
+      border-bottom: 1px solid var(--gray-200);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: var(--header-height);
+      padding-top: calc(16px + var(--safe-top));
+    }
+
+    .logo {
+      flex-shrink: 0;
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, var(--navy) 0%, var(--green) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--white);
+      font-weight: 700;
+      font-size: 1.125rem;
+      letter-spacing: -0.02em;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .header-text { flex: 1; min-width: 0; }
+
+    .header-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-subtitle {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Message Area */
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    @media (max-width: 760px) {
+      .messages {
+        padding: 16px;
+        gap: 12px;
+        padding-bottom: calc(88px + var(--safe-bottom));
+        scroll-padding-bottom: calc(88px + var(--safe-bottom));
+      }
+    }
+
+    .message {
+      display: flex;
+      gap: 10px;
+      animation: fadeIn var(--transition-normal) ease-out;
+      max-width: 85%;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.user { align-self: flex-end; flex-direction: row-reverse; }
+    .message.assistant { align-self: flex-start; }
+    .message.notice { align-self: center; max-width: 90%; }
+
+    .avatar {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-full);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--white);
+    }
+
+    .message.user .avatar { background: var(--navy); }
+    .message.assistant .avatar { background: var(--green); }
+    .message.notice .avatar { background: var(--amber); }
+
+    .bubble {
+      padding: 12px 16px;
+      border-radius: var(--radius-lg);
+      font-size: 0.9375rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .message.user .bubble {
+      background: var(--navy);
+      color: var(--white);
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.assistant .bubble {
+      background: var(--gray-100);
+      color: var(--text-primary);
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.notice .bubble {
+      background: var(--amber-bg);
+      color: var(--amber);
+      border: 1px solid rgba(196, 122, 26, 0.2);
+      border-radius: var(--radius-lg);
+      font-size: 0.875rem;
+      text-align: center;
+      padding: 10px 14px;
+    }
+
+    .message.notice.error .bubble {
+      background: var(--error-bg);
+      color: var(--error);
+      border-color: rgba(180, 35, 24, 0.2);
+    }
+
+    .message.typing .bubble {
+      background: var(--gray-100);
+      padding: 14px 18px;
+    }
+
+    .typing-dots {
+      display: inline-flex;
+      gap: 4px;
+    }
+
+    .typing-dots span {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--gray-400);
+      animation: typingBounce 1.4s infinite ease-in-out;
+    }
+
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-6px); opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .typing-dots span { animation: none; opacity: 1; }
+    }
+
+    /* Welcome State */
+    .welcome {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      text-align: center;
+      gap: 24px;
+    }
+
+    .welcome-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: var(--radius-lg);
+      background: var(--green-pale);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--green);
+      font-size: 1.75rem;
+    }
+
+    .welcome-title {
+      font-size: 1.375rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+    }
+
+    .welcome-subtitle {
+      font-size: 1rem;
+      color: var(--text-secondary);
+      max-width: 320px;
+    }
+
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      max-width: 480px;
+    }
+
+    .suggestion-chip {
+      flex: 1;
+      min-width: 140px;
+      max-width: 200px;
+      padding: 12px 16px;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-full);
+      background: var(--white);
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      text-align: center;
+      white-space: normal;
+    }
+
+    .suggestion-chip:hover {
+      border-color: var(--green);
+      color: var(--green);
+      background: var(--green-pale);
+    }
+
+    .suggestion-chip:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 480px) {
+      .suggestion-chip { flex: 1 1 calc(50% - 5px); min-width: 0; }
+    }
+
+    /* Composer */
+    .composer {
+      position: sticky;
+      bottom: 0;
+      z-index: 10;
+      background: var(--white);
+      border-top: 1px solid var(--gray-200);
+      padding: 12px 16px;
+      padding-bottom: calc(12px + var(--safe-bottom));
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    @media (max-width: 760px) {
+      .composer {
+        position: fixed;
+        left: 0;
+        right: 0;
+        max-width: var(--max-width);
+        margin: 0 auto;
+        border-radius: 0;
+        border-top-left-radius: var(--radius-lg);
+        border-top-right-radius: var(--radius-lg);
+        box-shadow: 0 -4px 20px rgba(13, 27, 42, 0.08);
+        padding: 12px 16px;
+        padding-left: calc(16px + var(--safe-left));
+        padding-right: calc(16px + var(--safe-right));
+      }
+    }
+
+    .composer-form { display: flex; gap: 10px; align-items: flex-end; flex: 1; width: 100%; }
+
+    .input-wrapper { flex: 1; position: relative; display: flex; flex-direction: column; }
+
+    .composer-input {
+      width: 100%;
+      min-height: 48px;
+      max-height: 160px;
+      padding: 12px 14px;
+      padding-right: 44px;
+      border: 1px solid var(--gray-300);
+      border-radius: var(--radius-full);
+      background: var(--gray-50);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: none;
+      overflow-y: hidden;
+      transition: all var(--transition-fast);
+      font-family: inherit;
+    }
+
+    .composer-input:focus {
+      outline: none;
+      border-color: var(--green);
+      background: var(--white);
+      box-shadow: 0 0 0 3px rgba(26, 127, 94, 0.15);
+    }
+
+    .composer-input::placeholder { color: var(--gray-400); }
+    .composer-input:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .char-counter {
+      position: absolute;
+      right: 12px;
+      bottom: 8px;
+      font-size: 0.6875rem;
+      color: var(--gray-400);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity var(--transition-fast), color var(--transition-fast);
+    }
+
+    .char-counter.visible { opacity: 1; }
+    .char-counter.warning { color: var(--amber); }
+    .char-counter.danger { color: var(--error); }
+
+    .send-btn {
+      flex-shrink: 0;
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius-full);
+      background: var(--green);
+      color: var(--white);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--transition-fast);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .send-btn:hover:not(:disabled) { background: var(--green-light); transform: scale(1.02); }
+    .send-btn:active:not(:disabled) { transform: scale(0.98); }
+    .send-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    .send-btn svg { width: 20px; height: 20px; }
+
+    /* Footer */
+    .footer {
+      padding: 12px 20px;
+      text-align: center;
+      color: var(--gray-500);
+      font-size: 0.75rem;
+      border-top: 1px solid var(--gray-200);
+      background: var(--white);
+    }
+
+    @media (max-width: 760px) {
+      .footer { display: none; }
+    }
+
+    /* Scrollbar */
+    .messages::-webkit-scrollbar { width: 6px; }
+    .messages::-webkit-scrollbar-track { background: transparent; }
+    .messages::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 3px; }
+    .messages::-webkit-scrollbar-thumb:hover { background: var(--gray-400); }
+
+    /* Visually hidden for screen readers */
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header" role="banner">
+      <div class="logo" aria-hidden="true">NIS</div>
+      <div class="header-text">
+        <h1 class="header-title">Northgate International School</h1>
+        <p class="header-subtitle">Here to help parents</p>
+      </div>
+    </header>
+
+    <main class="messages" role="log" aria-live="polite" aria-label="Conversation" id="messages"></main>
+
+    <form class="composer" id="composerForm" aria-label="Send a message">
+      <div class="input-wrapper">
+        <label for="messageInput" class="visually-hidden">Your message</label>
+        <textarea
+          id="messageInput"
+          class="composer-input"
+          placeholder="Ask about school life…"
+          rows="1"
+          aria-describedby="charCount"
+          maxlength="4000"
+          spellcheck="false"
+        ></textarea>
+        <span id="charCount" class="char-counter">0/4000</span>
+      </div>
+      <button type="submit" class="send-btn" id="sendBtn" aria-label="Send message" disabled>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 2L11 13"/>
+          <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+        </svg>
+      </button>
+    </form>
+
+    <footer class="footer" role="contentinfo">
+      <span>Demo prototype · Northgate International School</span>
+    </footer>
+  </div>
+
+  <script>
+    (function() {
+      'use strict';
+
+      // ----- State -----
+      const STORAGE_KEY = 'school_chat_user_id';
+      let userId = null;
+      let isSending = false;
+      let welcomeShown = false;
+
+      // ----- DOM Elements -----
+      const messagesEl = document.getElementById('messages');
+      const composerForm = document.getElementById('composerForm');
+      const inputEl = document.getElementById('messageInput');
+      const sendBtn = document.getElementById('sendBtn');
+      const charCountEl = document.getElementById('charCount');
+      const MAX_CHARS = 4000;
+
+      // ----- UUID Generation -----
+      function generateUUID() {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+          return crypto.randomUUID();
+        }
+        // Fallback for older environments
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        // Set version (4) and variant bits
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+          .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+      }
+
+      function getOrCreateUserId() {
+        let id = localStorage.getItem(STORAGE_KEY);
+        if (!id) {
+          id = generateUUID();
+          localStorage.setItem(STORAGE_KEY, id);
+        }
+        return id;
+      }
+
+      // ----- Message Rendering -----
+      function createElement(tag, className, text) {
+        const el = document.createElement(tag);
+        if (className) el.className = className;
+        if (text) el.textContent = text;
+        return el;
+      }
+
+      function createAvatar(role) {
+        const avatar = createElement('div', 'avatar');
+        avatar.textContent = role === 'user' ? 'Y' : (role === 'assistant' ? 'N' : '!');
+        avatar.setAttribute('aria-hidden', 'true');
+        return avatar;
+      }
+
+      function createBubble(content, className) {
+        const bubble = createElement('div', 'bubble ' + (className || ''));
+        if (typeof content === 'string') {
+          bubble.textContent = content;
+        } else if (content) {
+          bubble.appendChild(content);
+        }
+        return bubble;
+      }
+
+      function appendMessage(role, content, extraClasses = '') {
+        const wrapper = createElement('div', 'message ' + role + ' ' + extraClasses);
+        wrapper.appendChild(createAvatar(role));
+        wrapper.appendChild(createBubble(content));
+        messagesEl.appendChild(wrapper);
+        scrollToBottom();
+        return wrapper;
+      }
+
+      function appendNotice(text, isError = false) {
+        const noticeClass = isError ? 'notice error' : 'notice';
+        return appendMessage('notice', text, noticeClass);
+      }
+
+      function showTypingIndicator() {
+        const typing = createElement('div', 'message assistant typing');
+        typing.appendChild(createAvatar('assistant'));
+        const bubble = createBubble(null);
+        bubble.className = 'bubble';
+        const dots = createElement('div', 'typing-dots');
+        dots.appendChild(createElement('span'));
+        dots.appendChild(createElement('span'));
+        dots.appendChild(createElement('span'));
+        bubble.appendChild(dots);
+        typing.appendChild(bubble);
+        messagesEl.appendChild(typing);
+        scrollToBottom();
+        return typing;
+      }
+
+      function removeTypingIndicator(el) {
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      }
+
+      function scrollToBottom() {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      function clearWelcome() {
+        if (welcomeShown) {
+          messagesEl.innerHTML = '';
+          welcomeShown = false;
+        }
+      }
+
+      function showWelcome() {
+        welcomeShown = true;
+        messagesEl.innerHTML = '';
+        const welcome = createElement('div', 'welcome');
+        welcome.setAttribute('role', 'status');
+        welcome.setAttribute('aria-live', 'polite');
+
+        const icon = createElement('div', 'welcome-icon');
+        icon.textContent = '💬';
+        icon.setAttribute('aria-hidden', 'true');
+
+        const title = createElement('h2', 'welcome-title', 'Welcome to Northgate Assistant');
+        const subtitle = createElement('p', 'welcome-subtitle', 'Ask me anything about school life — times, absences, events, and more.');
+
+        const suggestions = createElement('div', 'suggestions');
+        suggestions.setAttribute('role', 'group');
+        suggestions.setAttribute('aria-label', 'Suggested questions');
+
+        const suggestionTexts = [
+          'What time does school start?',
+          'How do I report an absence?',
+          'What events are coming up?'
+        ];
+
+        suggestionTexts.forEach(text => {
+          const chip = createElement('button', 'suggestion-chip', text);
+          chip.setAttribute('type', 'button');
+          chip.addEventListener('click', () => {
+            inputEl.value = text;
+            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+            handleSend(new Event('submit'));
+          });
+          suggestions.appendChild(chip);
+        });
+
+        welcome.appendChild(icon);
+        welcome.appendChild(title);
+        welcome.appendChild(subtitle);
+        welcome.appendChild(suggestions);
+        messagesEl.appendChild(welcome);
+      }
+
+      // ----- Input Handling -----
+      function updateCharCounter() {
+        const len = inputEl.value.length;
+        charCountEl.textContent = len + '/' + MAX_CHARS;
+        charCountEl.classList.toggle('visible', len > MAX_CHARS * 0.7);
+        charCountEl.classList.toggle('warning', len > MAX_CHARS * 0.9);
+        charCountEl.classList.toggle('danger', len >= MAX_CHARS);
+
+        sendBtn.disabled = len === 0 || len > MAX_CHARS || isSending;
+      }
+
+      function autoResizeTextarea() {
+        const maxHeight = 160;
+        inputEl.style.height = 'auto';
+        const contentHeight = inputEl.scrollHeight;
+        inputEl.style.height = Math.min(contentHeight, maxHeight) + 'px';
+        inputEl.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden';
+      }
+
+      function setSending(state) {
+        isSending = state;
+        inputEl.disabled = state;
+        sendBtn.disabled = state || inputEl.value.trim().length === 0 || inputEl.value.length > MAX_CHARS;
+        if (!state) {
+          inputEl.focus();
+        }
+      }
+
+      // ----- API Communication -----
+      async function sendMessage(message) {
+        const typingEl = showTypingIndicator();
+        setSending(true);
+
+        try {
+          const response = await fetch('/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, message })
+          });
+
+          let data = null;
+          const contentType = response.headers.get('content-type');
+          const isJson = contentType && contentType.includes('application/json');
+
+          if (isJson) {
+            try {
+              data = await response.json();
+            } catch {
+              // Ignore JSON parse errors, will fall through to generic error
+            }
+          }
+
+          removeTypingIndicator(typingEl);
+
+          if (!response.ok) {
+            // Non-2xx: use the server message; busy is temporary, not an error
+            if (data && data.status === 'busy' && data.message) {
+              appendNotice(data.message, false);
+            } else if (data && data.message) {
+              appendNotice(data.message, true);
+            } else {
+              appendNotice('Unable to reach the assistant. Check your connection and try again.', true);
+            }
+            setSending(false);
+            return;
+          }
+
+          // Handle response shapes for 2xx
+          if (data && data.status === 'ok' && data.reply) {
+            clearWelcome();
+            appendMessage('assistant', data.reply);
+          } else if (data && data.reply && !data.status) {
+            // Legacy shape: { "reply": "..." }
+            clearWelcome();
+            appendMessage('assistant', data.reply);
+          } else if (data && data.status === 'busy' && data.message) {
+            appendNotice(data.message, false);
+          } else if (data && data.status === 'error' && data.message) {
+            appendNotice(data.message, true);
+          } else {
+            appendNotice('Something went wrong. Please try again.', true);
+          }
+        } catch (err) {
+          removeTypingIndicator(typingEl);
+          appendNotice('Unable to reach the assistant. Check your connection and try again.', true);
+        } finally {
+          setSending(false);
+        }
+      }
+
+      // ----- Event Handlers -----
+      function handleSend(event) {
+        event.preventDefault();
+        const text = inputEl.value.trim();
+        if (!text || isSending) return;
+        if (text.length > MAX_CHARS) return;
+
+        clearWelcome();
+        appendMessage('user', text);
+        inputEl.value = '';
+        autoResizeTextarea();
+        updateCharCounter();
+        sendMessage(text);
+      }
+
+      function handleInput() {
+        autoResizeTextarea();
+        updateCharCounter();
+      }
+
+      function handleKeydown(event) {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          composerForm.requestSubmit();
+        }
+      }
+
+      // ----- Initialization -----
+      function init() {
+        userId = getOrCreateUserId();
+        showWelcome();
+        updateCharCounter();
+
+        composerForm.addEventListener('submit', handleSend);
+        inputEl.addEventListener('input', handleInput);
+        inputEl.addEventListener('keydown', handleKeydown);
+
+        // Focus input on load
+        inputEl.focus();
+      }
+
+      // Start when DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    })();
+  </script>
+</body>
+</html>
