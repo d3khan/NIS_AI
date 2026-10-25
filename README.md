@@ -1,4 +1,4 @@
-# Northgate International School - Parent AI Assistant
+# Nobles International School - Parent AI Assistant
 
 A production-oriented school chat website: a Rust + Axum backend, PostgreSQL
 through SeaORM, a single-worker AI queue, and a dependency-free HTML/CSS/JS
@@ -264,6 +264,9 @@ first `#` heading.
 The system prompt tells the model to answer only from this document, to admit
 when information is missing, and to direct parents to the main office.
 
+See [manual.md](manual.md) for a step-by-step guide to editing the knowledge
+base, adding new topics, and testing changes.
+
 ## HTTP API
 
 ### `POST /chat`
@@ -446,6 +449,7 @@ needed. The table is created on the first successful start.
 ├── tsconfig.json
 ├── scripts/
 │   └── verify-neon.mjs   # live Neon service round-trip check
+├── manual.md             # guide to editing the school knowledge base
 ├── school_knowledge.md   # grounding document
 ├── src/
 │   ├── main.rs           # config, AI chain, queue worker, Axum handlers
