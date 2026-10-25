@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 # ---------- build stage ----------
 FROM rust:1.97-bookworm AS builder
 
