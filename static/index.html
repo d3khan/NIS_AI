@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="Nobles International School - Parent Assistant">
   <title>Nobles International School Assistant</title>
+  <link rel="icon" type="image/svg+xml" href="/LOGO.svg">
   <script>
     (function () {
       var THEME_KEY = 'school_chat_theme';
@@ -80,9 +81,6 @@
       --header-toggle-border: rgba(255, 255, 255, 0.3);
       --header-toggle-hover-bg: rgba(255, 255, 255, 0.18);
       --header-toggle-hover-border: rgba(255, 255, 255, 0.55);
-      --logo-bg: #ffffff;
-      --logo-text: var(--navy);
-      --logo-border: rgba(255, 255, 255, 0.5);
 
       /* Text */
       --text-primary: #0b2545;
@@ -116,8 +114,6 @@
       --chip-hover-bg: #eaf2fb;
       --chip-hover-text: #0b4f9c;
       --chip-hover-border: #2f6fbf;
-      --welcome-icon-bg: #eaf2fb;
-      --welcome-icon-text: #0b4f9c;
 
       /* Composer controls */
       --send-bg: #0b4f9c;
@@ -190,9 +186,6 @@
       --header-toggle-border: rgba(110, 168, 254, 0.4);
       --header-toggle-hover-bg: rgba(110, 168, 254, 0.22);
       --header-toggle-hover-border: #6ea8fe;
-      --logo-bg: #16243a;
-      --logo-text: #e8eef7;
-      --logo-border: #314762;
 
       /* Text */
       --text-primary: #e8eef7;
@@ -226,8 +219,6 @@
       --chip-hover-bg: #1b2d47;
       --chip-hover-text: #9cc4ff;
       --chip-hover-border: #6ea8fe;
-      --welcome-icon-bg: rgba(110, 168, 254, 0.12);
-      --welcome-icon-text: #6ea8fe;
 
       /* Composer controls */
       --send-bg: #1d4ed8;
@@ -318,17 +309,17 @@
       flex-shrink: 0;
       width: 44px;
       height: 44px;
-      border-radius: var(--radius-md);
-      background: var(--logo-bg);
-      border: 1px solid var(--logo-border);
+      border-radius: var(--radius-full);
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--logo-text);
-      font-weight: 700;
-      font-size: 1.125rem;
-      letter-spacing: -0.02em;
-      box-shadow: var(--shadow-sm);
+    }
+
+    .logo img {
+      display: block;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
     }
 
     .header-text { flex: 1; min-width: 0; }
@@ -533,15 +524,16 @@
     }
 
     .welcome-icon {
-      width: 72px;
-      height: 72px;
-      border-radius: var(--radius-lg);
-      background: var(--welcome-icon-bg);
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--welcome-icon-text);
-      font-size: 1.75rem;
+    }
+
+    .welcome-icon img {
+      display: block;
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
     }
 
     .welcome-title {
@@ -737,7 +729,7 @@
 <body>
   <div class="app">
     <header class="header" role="banner">
-      <div class="logo" aria-hidden="true">NIS</div>
+      <div class="logo" aria-hidden="true"><img src="/LOGO.svg" alt="" width="44" height="44"></div>
       <div class="header-text">
         <h1 class="header-title">Nobles International School</h1>
         <p class="header-subtitle">Here to help parents</p>
@@ -929,7 +921,12 @@
         welcome.setAttribute('aria-live', 'polite');
 
         const icon = createElement('div', 'welcome-icon');
-        icon.textContent = '💬';
+        const iconImg = document.createElement('img');
+        iconImg.src = '/LOGO.svg';
+        iconImg.alt = '';
+        iconImg.width = 64;
+        iconImg.height = 64;
+        icon.appendChild(iconImg);
         icon.setAttribute('aria-hidden', 'true');
 
         const title = createElement('h2', 'welcome-title', 'Welcome to Nobles Assistant');
